@@ -70,13 +70,16 @@ def create_item_rgb_color_map(
         dict[str, RGBColor]: The map of the item to the corresponding color.
     """
     item_rgb_color_map = {}
+    available_colors = list(custom_hex_color_map.keys()) if custom_hex_color_map else ["default"]
 
-    for item in items:
-        color_name = item_custom_color_name_map[item.color_identifier]
-        hex_str = custom_hex_color_map.get(color_name)
-        rgb = rgb_from_hex(hex_str)
+    for idx, item in enumerate(items):
         if item.color_identifier in item_rgb_color_map:
             continue
+        color_name = item_custom_color_name_map.get(item.color_identifier)
+        if not color_name or color_name not in custom_hex_color_map:
+            color_name = available_colors[idx % len(available_colors)]
+        hex_str = custom_hex_color_map.get(color_name, "#4682B4")
+        rgb = rgb_from_hex(hex_str)
         item_rgb_color_map[item.color_identifier] = rgb
 
     return item_rgb_color_map

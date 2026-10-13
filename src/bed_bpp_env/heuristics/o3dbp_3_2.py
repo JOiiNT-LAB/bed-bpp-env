@@ -108,7 +108,7 @@ class O3DBP_3_2:
             firstCornerPointAction = self.__estimateCurrentCPScoreWithUpcomingItems(info, observation)
             successful = True
             # check whether corner point in origin should be taken
-            if not (firstCornerPointAction["x"] == 0 and firstCornerPointAction["y"]):
+            if not (firstCornerPointAction["x"] == 0 and firstCornerPointAction["y"] == 0):
                 tempCornerPoint = (
                     firstCornerPointAction["x"],
                     firstCornerPointAction["y"],
@@ -122,8 +122,29 @@ class O3DBP_3_2:
 
                 heightOrigin = observation[0, 0]
                 if heightOrigin - estimatedHeightInCP < -20:
-                    logger.info(f"HEIGHT IN CORNER POINT IS TOO BIG -> SET CP to ORIGIN")
-                    firstCornerPointAction = {"x": 0, "y": 0, "orientation": 0, "item": actionItem}
+                    if heightOrigin + itemSize[2] <= 2000:
+                        logger.info(f"HEIGHT IN CORNER POINT IS TOO BIG -> SET CP to ORIGIN")
+                        firstCornerPointAction = {"x": 0, "y": 0, "orientation": 0, "item": actionItem}
+                    else:
+                        logger.info(f"ORIGIN WOULD EXCEED CEILING (2000 mm) -> CANNOT PLACE AT ORIGIN")
+                        firstCornerPointAction = {"x": None, "y": None, "orientation": None, "item": None}
+                        successful = False
+
+            # Strict verification that the final selected action does not breach 2000 mm ceiling
+            if successful and firstCornerPointAction.get("item") is not None:
+                actionItem = firstCornerPointAction["item"]
+                itemSize = actionItem["length/mm"], actionItem["width/mm"], actionItem["height/mm"]
+                finalCP = (
+                    firstCornerPointAction["x"],
+                    firstCornerPointAction["y"],
+                    None,
+                    firstCornerPointAction["orientation"],
+                )
+                finalEstHeight = self.__estimatePlacementZCoordinate(observation, finalCP, itemSize)
+                if finalEstHeight > 2000:
+                    logger.info(f"Final placement height {finalEstHeight} mm exceeds 2000 mm ceiling -> stopping.")
+                    firstCornerPointAction = {"x": None, "y": None, "orientation": None, "item": None}
+                    successful = False
 
         else:
             firstCornerPointAction = {"x": None, "y": None, "orientation": None, "item": None}
@@ -361,6 +382,8 @@ class O3DBP_3_2:
         # prepare actions depending on items that can be selected
         collectionActionAndScore = []
         for item in info.get("next_items_selection", []):
+            if item is None:
+                continue
             itemArticle = item.get("article")
             itemSize = item.get("length/mm"), item.get("width/mm"), item.get("height/mm")
             itemCP = info["corner_points"].get(itemArticle, {})
@@ -442,6 +465,9 @@ class O3DBP_3_2:
                 break
             collectionActionAndScore = tempCollectionActionsAndScores
 
+        if not collectionActionAndScore:
+            return {"x": 0, "y": 0, "orientation": 0, "item": None}
+
         # TAKE THE ACTION WITH THE HIGHEST SCORE!
         collectionScores = [np.sum(collEntry["scores"]) for collEntry in collectionActionAndScore]
         maxScoreIndex = np.argmax(collectionScores)
@@ -480,13 +506,14 @@ class O3DBP_3_2:
                 break
 
         possibleCP = self.__extractCornerPointsFromEnvironmentInfo(nextInfo.get("corner_points", {}))
-        if possibleCP == []:
+        valid_selection = [it for it in nextInfo.get("next_items_selection", []) if it is not None]
+        if possibleCP == [] or not valid_selection:
             returnInformation["resulting_actions"] = []
             returnInformation["resulting_corner_points"] = []
             returnInformation["scores"] = []
 
         else:
-            nextItem = nextInfo["next_items_selection"][0]
+            nextItem = valid_selection[0]
             nextItemSize = [nextItem["length/mm"], nextItem["width/mm"], nextItem["height/mm"]]
 
             # Calculate the scores of the corner points

@@ -5,7 +5,11 @@ One essential assumption we made here is that the items are placed parallel to t
 """
 
 import logging
-from typing import Optional, Self
+from typing import Optional
+try:
+    from typing import Self
+except ImportError:
+    from typing_extensions import Self
 
 import numpy as np
 
@@ -52,27 +56,37 @@ class Cuboid(object):
     @property
     def id(self) -> str:
         """The identifier of this cuboid."""
-        return self._metadata.id
+        if hasattr(self._metadata, "id"):
+            return self._metadata.id
+        return str(self._metadata.get("id", ""))
 
     @property
     def length(self) -> int:
         """The length of this cuboid."""
-        return int(self._metadata.length_mm)
+        if hasattr(self._metadata, "length_mm"):
+            return int(self._metadata.length_mm)
+        return int(self._metadata.get("length/mm", self._metadata.get("length", 0)))
 
     @property
     def width(self) -> int:
         """The width of this cuboid."""
-        return int(self._metadata.width_mm)
+        if hasattr(self._metadata, "width_mm"):
+            return int(self._metadata.width_mm)
+        return int(self._metadata.get("width/mm", self._metadata.get("width", 0)))
 
     @property
     def height(self) -> int:
         """The height of this cuboid."""
-        return self._metadata.height_mm
+        if hasattr(self._metadata, "height_mm"):
+            return int(self._metadata.height_mm)
+        return int(self._metadata.get("height/mm", self._metadata.get("height", 0)))
 
     @property
     def weight(self) -> float:
         """The weight of this cuboid."""
-        return self._metadata.weight_kg
+        if hasattr(self._metadata, "weight_kg"):
+            return float(self._metadata.weight_kg)
+        return float(self._metadata.get("weight/kg", self._metadata.get("weight", 0.0)))
 
     @property
     def volume(self) -> float:

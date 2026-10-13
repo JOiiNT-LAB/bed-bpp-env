@@ -8,13 +8,14 @@ import numpy as np
 
 from bed_bpp_env.data_model.position_3d import Position3D
 from bed_bpp_env.environment import HEIGHT_TOLERANCE_MM as HEIGHT_TOLERANCE_MM
+from bed_bpp_env.environment import MAXHEIGHT_TARGET
 from bed_bpp_env.environment.cuboid import Cuboid
 from bed_bpp_env.environment.direction import Direction, opposite_direction
 
 logger = logging.getLogger(__name__)
 
-MAXHEIGHT = 3_000  # for corner points
-"""The maximum height in millimeters for that corner points are determined. Needs to be greater than the maximum palletizing height."""
+MAXHEIGHT = MAXHEIGHT_TARGET  # 2000 mm for corner points
+"""The maximum height in millimeters for which corner points are determined (Euro-pallet ceiling: 2000 mm)."""
 
 
 class Space3D:
@@ -39,8 +40,9 @@ class Space3D:
         This `np.ndarray` has the same shape as the height map of the three-dimensional space and stores a counter that represents the counter of the uppermost item.
     """
 
-    def __init__(self, basesize: tuple = (1_200, 8_00)) -> None:
+    def __init__(self, basesize: tuple = (1_200, 8_00), max_height: int = MAXHEIGHT_TARGET) -> None:
         self._size = basesize
+        self._max_height = max_height
         """The space's size of the base area in x- and y-direction given in millimeters."""
 
         self._placed_items = {}
@@ -136,7 +138,7 @@ class Space3D:
         )
         self._placed_items[counter_item] = item
 
-    def reset(self, basesize: tuple) -> None:
+    def reset(self, basesize: tuple, max_height: int = MAXHEIGHT_TARGET) -> None:
         """
         Resets the attributes to their initial values and reshapes the numpy.ndarrays that store the heights and uppermost items.
 
@@ -144,8 +146,11 @@ class Space3D:
         -----------
         basesize: tuple
             The shape of the base area given as `(shape_x, shape_y)`.
+        max_height: int
+            The maximum stack height in millimeters (default: MAXHEIGHT_TARGET = 2000 mm).
         """
         self._size = basesize
+        self._max_height = max_height
         target_shape = self._size[1], self._size[0]
 
         self._placed_items = {}
@@ -284,7 +289,7 @@ class Space3D:
 
         for height_value in target_height_levels:
             # stop search if first time a placement would exceed the maximum height
-            if height_value + itemdimension[2] > MAXHEIGHT:
+            if height_value + itemdimension[2] > self._max_height:
                 break
 
             # create a subset of placed items that are located above the height level

@@ -20,5 +20,8 @@ if not (usedData is None):
     colorDBFilename = pathlib.Path(__file__).parent.resolve().joinpath(f"colors/colordb_{usedData.name}")
     if not (colorDBFilename.exists()):
         generate_color_database.generateColorDatabase(usedData)
-    with open(colorDBFilename) as file:
-        COLOR_DATABASE = json.load(file, parse_int=False)
+    try:
+        with open(colorDBFilename) as file:
+            COLOR_DATABASE = json.load(file, parse_int=False)
+    except Exception:
+        COLOR_DATABASE = {}

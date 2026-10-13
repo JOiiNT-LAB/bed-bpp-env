@@ -11,7 +11,7 @@ import gymnasium as gym
 import numpy as np
 from gymnasium.spaces import Box, Dict, Discrete
 
-from bed_bpp_env.environment import MAXHEIGHT_OBSERVATION_SPACE, SIZE_EURO_PALLET, SIZE_ROLLCONTAINER
+from bed_bpp_env.environment import MAXHEIGHT_OBSERVATION_SPACE, MAXHEIGHT_TARGET, SIZE_EURO_PALLET, SIZE_ROLLCONTAINER
 from bed_bpp_env.environment.cuboid import Cuboid
 from bed_bpp_env.environment.space_3d import Space3D
 from bed_bpp_env.evaluation.kpis import KPIs
@@ -148,6 +148,17 @@ class SimPalEnv(gym.Env):
 
         # obtaiin the FLB height for the item in the selected (x, y)-coordinate
         maxHeightInTargetArea = int(np.amax(np.multiply(self.__TargetSpace.getHeights(), item_on_target)))
+
+        if maxHeightInTargetArea + step_vars["itemHeight"] > MAXHEIGHT_TARGET:
+            logger.debug(
+                f"SimPalEnv: Action exceeds MAXHEIGHT_TARGET {MAXHEIGHT_TARGET} mm "
+                f"(FLB z={maxHeightInTargetArea}, h={step_vars['itemHeight']}). Terminating."
+            )
+            done = True
+            info.update({"done": True, "action_for_vis": None})
+            reward = self.__getReward(done)
+            info = self.__getInfo("step", info)
+            return self.__TargetSpace.getHeights(), reward, done, info
 
         # define the action in the needed format
         actionExt = {
@@ -436,18 +447,19 @@ class SimPalEnv(gym.Env):
         """
         cornerPoints = {}
         for item in possibleitems:
-            itemArticle = item.get("article", None)
-            if not (itemArticle is None):
-                cornerPoints[itemArticle] = {}
-                for orientation in range(self.__N_ORIENTATION):
-                    if orientation == 0:
-                        length, width, height = item.get("length/mm"), item.get("width/mm"), item.get("height/mm")
-                    elif orientation == 1:
-                        width, length, height = item.get("length/mm"), item.get("width/mm"), item.get("height/mm")
+            if item is not None:
+                itemArticle = item.get("article", None)
+                if not (itemArticle is None):
+                    cornerPoints[itemArticle] = {}
+                    for orientation in range(self.__N_ORIENTATION):
+                        if orientation == 0:
+                            length, width, height = item.get("length/mm"), item.get("width/mm"), item.get("height/mm")
+                        elif orientation == 1:
+                            width, length, height = item.get("length/mm"), item.get("width/mm"), item.get("height/mm")
 
-                    cornerPoints[itemArticle][orientation] = self.__TargetSpace.getCornerPointsIn3D(
-                        (length, width, height)
-                    )
+                        cornerPoints[itemArticle][orientation] = self.__TargetSpace.getCornerPointsIn3D(
+                            (length, width, height)
+                        )
 
         return cornerPoints
 
@@ -471,7 +483,20 @@ class SimPalEnv(gym.Env):
         if (self.__ItemSequenceCounter == 1) or (len(self.__ItemsPreview) == 0):
             if not (self.__ItemSequenceCounter == 1):
                 # not first call -> remove itemdict from selection
-                self.__ItemsSelection.remove(itemdict)
+                matched = False
+                for idx, it in enumerate(self.__ItemsSelection):
+                    if it == itemdict or (hasattr(itemdict, "to_dict") and it == itemdict.to_dict()) or (hasattr(it, "to_dict") and it.to_dict() == itemdict):
+                        self.__ItemsSelection.pop(idx)
+                        matched = True
+                        break
+                    it_seq = it.get("sequence") if isinstance(it, dict) else getattr(it, "sequence", None)
+                    dict_seq = itemdict.get("sequence") if isinstance(itemdict, dict) else getattr(itemdict, "sequence", None)
+                    if it_seq is not None and it_seq == dict_seq:
+                        self.__ItemsSelection.pop(idx)
+                        matched = True
+                        break
+                if not matched and self.__ItemsSelection:
+                    self.__ItemsSelection.pop(0)
             # first call in env.reset in an episode
             for s in range(self.__NItemSelection):
                 itemKey = str(self.__ItemSequenceCounter + s)
@@ -483,8 +508,22 @@ class SimPalEnv(gym.Env):
                     self.__ItemsSelection.append({})
         else:
             # call in env.step
-            self.__ItemsSelection.remove(itemdict)
-            self.__ItemsSelection.append(self.__ItemsPreview.pop(0))
+            matched = False
+            for idx, it in enumerate(self.__ItemsSelection):
+                if it == itemdict or (hasattr(itemdict, "to_dict") and it == itemdict.to_dict()) or (hasattr(it, "to_dict") and it.to_dict() == itemdict):
+                    self.__ItemsSelection.pop(idx)
+                    matched = True
+                    break
+                it_seq = it.get("sequence") if isinstance(it, dict) else getattr(it, "sequence", None)
+                dict_seq = itemdict.get("sequence") if isinstance(itemdict, dict) else getattr(itemdict, "sequence", None)
+                if it_seq is not None and it_seq == dict_seq:
+                    self.__ItemsSelection.pop(idx)
+                    matched = True
+                    break
+            if not matched and self.__ItemsSelection:
+                self.__ItemsSelection.pop(0)
+            if self.__ItemsPreview:
+                self.__ItemsSelection.append(self.__ItemsPreview.pop(0))
 
     def __updateItemsPreview(self) -> None:
         """

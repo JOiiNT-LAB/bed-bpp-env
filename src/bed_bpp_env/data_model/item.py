@@ -48,3 +48,17 @@ class Item(DataclassBase):
             item_to_dict[key] = getattr(self, item_field.name)
 
         return item_to_dict
+
+    def __getitem__(self, key: str):
+        d = self.to_dict()
+        if key in d:
+            return d[key]
+        if hasattr(self, key):
+            return getattr(self, key)
+        raise KeyError(key)
+
+    def get(self, key: str, default=None):
+        try:
+            return self[key]
+        except KeyError:
+            return default

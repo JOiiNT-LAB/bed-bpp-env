@@ -1,5 +1,14 @@
-from enum import StrEnum
-from typing import Self
+try:
+    from enum import StrEnum
+except ImportError:
+    from enum import Enum
+    class StrEnum(str, Enum):
+        pass
+
+try:
+    from typing import Self
+except ImportError:
+    from typing_extensions import Self
 
 _TO_METERS = {
     "mm": 0.001,

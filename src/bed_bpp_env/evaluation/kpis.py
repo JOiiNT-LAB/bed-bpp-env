@@ -55,7 +55,8 @@ class KPIs:
 
         itemVolumeOnPallet = sum([item.volume / 1000.0 for item in placedItems])
 
-        self.__Values["unpalletized_items"] = len(currentOrder.item_sequence) - len(placedItems)
+        total_order_items = len(currentOrder.item_sequence) if hasattr(currentOrder, "item_sequence") else len(currentOrder.get("item_sequence", []))
+        self.__Values["unpalletized_items"] = total_order_items - len(placedItems)
         self.__Values["maximum_palletizing_height/mm"] = np.amax(palHeightMap)
         self.__Values["vol_items/cm^3"] = itemVolumeOnPallet
         self.__Values["packing_stability"] = {

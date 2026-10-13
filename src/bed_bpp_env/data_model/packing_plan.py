@@ -1,5 +1,8 @@
 from dataclasses import dataclass, fields
-from typing import Self
+try:
+    from typing import Self
+except ImportError:
+    from typing_extensions import Self
 
 from bed_bpp_env.data_model.action import Action
 from bed_bpp_env.data_model.dataclass_base import DataclassBase

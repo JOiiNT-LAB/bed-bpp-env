@@ -20,14 +20,17 @@ from PIL import Image, ImageDraw, ImageFont
 from bed_bpp_env.data_model.item import Item
 from bed_bpp_env.data_model.order import Order
 from bed_bpp_env.data_model.position_3d import Position3D
-from bed_bpp_env.environment import MAXHEIGHT_OBSERVATION_SPACE, SIZE_EURO_PALLET, SIZE_ROLLCONTAINER
+from bed_bpp_env.environment import MAXHEIGHT_OBSERVATION_SPACE, MAXHEIGHT_TARGET, SIZE_EURO_PALLET, SIZE_ROLLCONTAINER
 from bed_bpp_env.environment.cuboid import Cuboid
 from bed_bpp_env.environment.lc import LC
 from bed_bpp_env.environment.space_3d import Space3D
 from bed_bpp_env.evaluation.kpis import KPIs
 from bed_bpp_env.utils import OUTPUTDIRECTORY, PARSEDARGUMENTS
 from bed_bpp_env.utils.configuration import USEDCONFIGURATIONFILE
-from bed_bpp_env.visualization.palletizing_environment_visualization import PalletizingEnvironmentVisualization
+try:
+    from bed_bpp_env.visualization.palletizing_environment_visualization import PalletizingEnvironmentVisualization
+except (ImportError, ModuleNotFoundError):
+    PalletizingEnvironmentVisualization = None
 
 RENDER = PARSEDARGUMENTS.get("visualize", False)
 
@@ -176,6 +179,17 @@ class PalletizingEnvironment(gym.Env):
         # obtaiin the FLB height for the item in the selected (x, y)-coordinate
         max_height_in_target_area = int(np.amax(np.multiply(self._target_space.getHeights(), item_on_target)))
 
+        if max_height_in_target_area + step_vars["itemHeight"] > MAXHEIGHT_TARGET:
+            logger.info(
+                f"Action exceeds MAXHEIGHT_TARGET {MAXHEIGHT_TARGET} mm "
+                f"(FLB z={max_height_in_target_area}, h={step_vars['itemHeight']}). Terminating episode."
+            )
+            done = True
+            info.update({"done": True, "action_for_vis": None})
+            reward = self.__getReward(done)
+            info = self.__getInfo("step", info, done)
+            return self._target_space.getHeights(), reward, done, info
+
         # define the action in the needed format
         action_extended = {
             "item": item_for_action,
@@ -206,7 +220,7 @@ class PalletizingEnvironment(gym.Env):
         step_returns = self._target_space.getHeights(), reward, done, info
         return step_returns
 
-    def reset(self, order_sequence: Optional[list[Order]] = None) -> tuple[np.ndarray, dict]:
+    def reset(self, order_sequence: Optional[list[Order]] = None, data_for_episodes: Optional[dict] = None) -> tuple[np.ndarray, dict]:
         """
         This method is responsible for
         (a) the change of the orders, e.g., from "00100001" -> "00100002",
@@ -217,7 +231,7 @@ class PalletizingEnvironment(gym.Env):
 
         Parameters.
         -----------
-        data_for_epsidoes: dict (default = {})
+        data_for_episodes: dict (default = None)
             The data for the episodes in the format of the benchmark data.
 
         Returns.
@@ -230,6 +244,8 @@ class PalletizingEnvironment(gym.Env):
         self.__savePackingPlan()
         # # # # # Change the Order that is considered # # # # #
         done = False
+        if order_sequence is None and data_for_episodes:
+            order_sequence = [Order.from_dict({**v, "id": k}) for k, v in data_for_episodes.items()]
         # change the current order
         if self._current_order is None or order_sequence is not None:
             self._orders = order_sequence.copy()
@@ -269,10 +285,13 @@ class PalletizingEnvironment(gym.Env):
             }
         )
 
-        del self._visualization
-        self._visualization = PalletizingEnvironmentVisualization(
-            visID=self._current_order.id, target=palletizing_target
-        )
+        if RENDER and PalletizingEnvironmentVisualization is not None:
+            del self._visualization
+            self._visualization = PalletizingEnvironmentVisualization(
+                visID=self._current_order.id, target=palletizing_target
+            )
+        else:
+            self._visualization = None
 
         self._target_space.reset(self._size)
         self._actions = []
@@ -648,10 +667,22 @@ class PalletizingEnvironment(gym.Env):
         ----------
         Call this method before `self.__updateItemsPreview`.
         """
+        def _remove_item(it_to_remove):
+            for idx, it in enumerate(self._items_selection):
+                if it == it_to_remove or (hasattr(it_to_remove, "to_dict") and it == it_to_remove.to_dict()) or (hasattr(it, "to_dict") and it.to_dict() == it_to_remove):
+                    self._items_selection.pop(idx)
+                    return
+                it_seq = it.get("sequence") if isinstance(it, dict) else getattr(it, "sequence", None)
+                dict_seq = it_to_remove.get("sequence") if isinstance(it_to_remove, dict) else getattr(it_to_remove, "sequence", None)
+                if it_seq is not None and it_seq == dict_seq:
+                    self._items_selection.pop(idx)
+                    return
+            if self._items_selection:
+                self._items_selection.pop(0)
+
         if (self._item_sequence_counter == 0) or (len(self._items_preview) == 0):
             if self._item_sequence_counter != 0:
-                # not first call -> remove itemdict from selection
-                self._items_selection.remove(itemdict)
+                _remove_item(itemdict)
             # first call in env.reset in an episode
             for s in range(self._n_item_selection):
                 item_index = self._item_sequence_counter + s
@@ -661,8 +692,9 @@ class PalletizingEnvironment(gym.Env):
                     self._items_selection.append(None)
         else:
             # call in env.step
-            self._items_selection.remove(itemdict)
-            self._items_selection.append(self._items_preview.pop(0))
+            _remove_item(itemdict)
+            if self._items_preview:
+                self._items_selection.append(self._items_preview.pop(0))
 
     def __updateItemsPreview(self) -> None:
         """
@@ -673,16 +705,15 @@ class PalletizingEnvironment(gym.Env):
         Call this method after `self.__updateItemsSelection`.
         """
         for k in range(self._n_item_selection, self._n_item_preview):
-            item_counter = self._item_sequence_counter + k
-            item_key = str(item_counter)
-            if item_key in self._current_order["order"]["item_sequence"].keys():
-                preview_item = self._current_order["order"]["item_sequence"][item_key]
+            item_index = self._item_sequence_counter + k
+            if item_index < len(self._current_order.item_sequence):
+                preview_item = self._current_order.item_sequence[item_index]
                 if preview_item not in self._items_preview:
                     self._items_preview.append(preview_item)
             else:
                 n_pure_preview_items = self._n_item_preview - self._n_item_selection
                 if not (len(self._items_preview) >= n_pure_preview_items):
-                    self._items_preview.append({})
+                    self._items_preview.append(None)
 
     def __updatePalletVisualization(self, action: dict) -> None:
         item: Item = action["item"]
@@ -707,8 +738,9 @@ class PalletizingEnvironment(gym.Env):
             position=Position3D(x=flbcoordinates[0], y=flbcoordinates[1], z=flbcoordinates[2]),
         )
 
-        self._visualization.addLoadCarrier(lc)
-        self._visualization.updateVisualization()
+        if self._visualization is not None:
+            self._visualization.addLoadCarrier(lc)
+            self._visualization.updateVisualization()
 
     def __determineCornerPoints(self, possibleitems: list[Item]) -> dict:
         """
